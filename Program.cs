@@ -1,13 +1,18 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using System.Windows.Forms;
 
-namespace MovingObjectClient
+namespace MovingObjectServer
 {
     static class Program
     {
-        static TcpClient client;
+        static TcpListener listener;
+        static List<TcpClient> clients = new List<TcpClient>();
         static bool running = true;
 
         [STAThread]
@@ -16,31 +21,59 @@ namespace MovingObjectClient
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // Start client connection
-            client = new TcpClient("127.0.0.1", 8080);
-            Thread clientThread = new Thread(ReceiveData);
-            clientThread.Start();
+            // Start the listener server on a separate thread
+            Thread listenerThread = new Thread(StartServer);
+            listenerThread.Start();
 
             Application.Run(new Form1());
 
+            // Stop the server when the application closes
             running = false;
-            client.Close();
+            listener.Stop();
         }
 
-        static void ReceiveData()
+        static void StartServer()
         {
-            NetworkStream stream = client.GetStream();
-            byte[] buffer = new byte[8];
+            listener = new TcpListener(IPAddress.Any, 8080);
+            listener.Start();
+            Console.WriteLine("Server started...");
 
             while (running)
             {
-                int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 8)
+                try
                 {
-                    int x = BitConverter.ToInt32(buffer, 0);
-                    int y = BitConverter.ToInt32(buffer, 4);
+                    TcpClient client = listener.AcceptTcpClient();
+                    lock (clients)
+                    {
+                        clients.Add(client);
+                    }
 
-                    Form1.UpdateRectanglePosition(x, y);
+                    Console.WriteLine("Client connected...");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error: " + ex.Message);
+                }
+            }
+        }
+
+        public static void BroadcastPosition(int x, int y)
+        {
+            byte[] data = BitConverter.GetBytes(x).Concat(BitConverter.GetBytes(y)).ToArray();
+
+            lock (clients)
+            {
+                foreach (var client in clients)
+                {
+                    try
+                    {
+                        client.GetStream().Write(data, 0, data.Length);
+                    }
+                    catch (Exception)
+                    {
+                        // Remove disconnected client
+                        clients.Remove(client);
+                    }
                 }
             }
         }
